@@ -3,6 +3,7 @@ import argparse
 import collections
 import copy
 import json
+import math
 import os
 import re
 import sys
@@ -69,7 +70,7 @@ def main():
             rotation=target_fixed_model_transform_mat[:3, :3],
             translation=target_fixed_model_transform_mat[:3, 3],
             from_frame='ycb_model',
-            to_frame='target_model'
+            to_frame='target_model_original'
         )
         model_transform = fixed_model_transform.dot(target_fixed_model_transform.inverse())
 
@@ -144,7 +145,21 @@ def process_frame(frame_json, camera_intrinsics, models):
             to_frame='camera'
         )
         object_pose = object_pose.dot(models[model_name].model_transform)
-        # TODO: flip
+
+        # Handle symmetrical objects: if z axis (= x axis in mesh) points towards camera,
+        # rotate by 180 degrees around x (= z axis in mesh).
+        # This always keeps the "green/yellow" short side (in nvdu_viz) pointed towards
+        # the camera; the "blue/magenta" short side should never be visible. This is necessary
+        # for DOPE training, since both sides look the same because the KLT box is symmetrical.
+        symmetry_flip_tf = RigidTransform(
+            from_frame='target_model',
+            to_frame='target_model_original'
+        )
+        z_axis = rotation.dot(np.array([0.0, 0.0, 1.0], dtype=np.float64))
+        if z_axis.dot(translation) < 0:
+            symmetry_flip_tf.rotation = RigidTransform.x_axis_rotation(math.pi)
+        object_pose = object_pose.dot(symmetry_flip_tf)
+
         object_poses.append(object_pose)
 
         updated_frame_json['objects'][object_index]['location'] = object_pose.translation.tolist()
